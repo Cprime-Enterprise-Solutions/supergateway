@@ -1,0 +1,48 @@
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import { Collection, MongoClient } from 'mongodb'
+
+export class McpServerLogRepository {
+  private readonly collection: Collection
+
+  constructor(
+    private readonly client: MongoClient,
+    dbName = 'local',
+    collectionName = 'mcp_server_logs',
+  ) {
+    this.collection = this.client.db(dbName).collection(collectionName)
+  }
+
+  insert(data: McpServerLogDto) {
+    return this.collection.insertOne(data)
+  }
+
+  update(
+    sessionId: string,
+    update: {
+      result?: unknown
+      id: number
+      error?: { message: string; code: number }
+    },
+  ) {
+    return this.collection.updateOne(
+      { sessionId, 'data.id': update.id },
+      {
+        $set: {
+          'data.result': update.result,
+          'data.error': update.error,
+          updatedAt: new Date(),
+        },
+      },
+    )
+  }
+}
+
+export type McpServerLogDto = {
+  ip: string
+  type: 'rpc' | 'error' | 'system'
+  userId: string
+  sessionId: string
+  data: JSONRPCMessage | string
+  createdAt: Date
+  updatedAt: Date
+}

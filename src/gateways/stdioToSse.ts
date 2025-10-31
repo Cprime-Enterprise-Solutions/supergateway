@@ -10,6 +10,8 @@ import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { EncryptionService } from '../services/encryptionService.js'
+import { initMongoClient } from '../lib/initMongoClient.js'
+import { McpServerLogRepository } from '../lib/mcpServerLogRepository.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -80,6 +82,13 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   onSignals({ logger })
 
+  const mongoClient = initMongoClient()
+  const mcpServerLogRepository = new McpServerLogRepository(
+    mongoClient,
+    process.env.MONGO_DB ?? 'localhost',
+    process.env.LOGS_COLLECTION ?? 'mcp_server_logs',
+  )
+
   const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, {
     shell: true,
     env: { ...process.env, ...decryptedEnvs },
@@ -96,7 +105,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   const sessions: Record<
     string,
-    { transport: SSEServerTransport; response: express.Response }
+    {
+      transport: SSEServerTransport
+      response: express.Response
+      ip: string
+      userId: string
+    }
   > = {}
 
   const app = express()
@@ -133,11 +147,29 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
     const sessionId = sseTransport.sessionId
     if (sessionId) {
-      sessions[sessionId] = { transport: sseTransport, response: res }
+      sessions[sessionId] = {
+        transport: sseTransport,
+        response: res,
+        ip: req.ip ?? '',
+        userId: (req.query.userId as string) ?? '',
+      }
     }
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
+      mcpServerLogRepository
+        .insert({
+          ip: req.ip ?? '',
+          userId: (req.query.userId as string) ?? '',
+          sessionId,
+          type: 'rpc',
+          data: msg,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .catch((err) => {
+          logger.error(`Failed to insert log:`, JSON.stringify(err))
+        })
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
 
@@ -198,6 +230,19 @@ export async function stdioToSse(args: StdioToSseArgs) {
         for (const [sid, session] of Object.entries(sessions)) {
           try {
             session.transport.send(jsonMsg)
+            mcpServerLogRepository
+              .insert({
+                ip: session.ip,
+                userId: session.userId,
+                sessionId: sid,
+                type: 'system',
+                data: line,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .catch((err) => {
+                logger.error(`Failed to insert log:`, JSON.stringify(err))
+              })
           } catch (err) {
             logger.error(`Failed to send to session ${sid}:`, err)
             delete sessions[sid]

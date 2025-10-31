@@ -9,6 +9,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { EncryptionService } from '../services/encryptionService.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -20,6 +21,19 @@ export interface StdioToSseArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+}
+
+const encryptionService = new EncryptionService('env')
+const plaintext = await encryptionService.decryptText(
+  process.env.ENCRYPTED_ENV ?? '',
+  process.env.AAD_JSON ? JSON.parse(process.env.AAD_JSON) : {},
+)
+let decryptedEnvs = {}
+try {
+  const asObj = JSON.parse(plaintext)
+  decryptedEnvs = asObj
+} catch {
+  console.error('Failed to parse decrypted envs', plaintext)
 }
 
 const setResponseHeaders = ({
@@ -66,7 +80,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   onSignals({ logger })
 
-  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
+  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, {
+    shell: true,
+    env: { ...process.env, ...decryptedEnvs },
+  })
   child.on('exit', (code, signal) => {
     logger.error(`Child exited: code=${code}, signal=${signal}`)
     process.exit(code ?? 1)

@@ -24,12 +24,15 @@
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
     "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "enc:play": "tsx scripts/encryption-play.ts",
+    "enc:sample:decrypt": "tsx scripts/decrypt-sample.ts"
   },
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.921.0",
     "@modelcontextprotocol/sdk": "^1.18.2",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
@@ -41,7 +44,6 @@
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
-    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.18",
@@ -50,6 +52,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.0.0",
     "prettier": "^3.5.3",
+    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"

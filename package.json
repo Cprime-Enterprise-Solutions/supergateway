@@ -1,10 +1,10 @@
 {
-  "name": "supergateway",
+  "name": "cprime-supergateway",
   "version": "3.4.3",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/supercorp-ai/supergateway.git"
+    "url": "git+https://github.com/Cprime-Enterprise-Solutions/supergateway.git"
   },
   "keywords": [
     "mcp",

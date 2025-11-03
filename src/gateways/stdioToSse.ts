@@ -26,16 +26,18 @@ export interface StdioToSseArgs {
 }
 
 const encryptionService = new EncryptionService('env')
-const plaintext = await encryptionService.decryptText(
-  process.env.ENCRYPTED_ENV ?? '',
-  process.env.AAD_JSON ? JSON.parse(process.env.AAD_JSON) : {},
-)
 let decryptedEnvs = {}
-try {
-  const asObj = JSON.parse(plaintext)
-  decryptedEnvs = asObj
-} catch {
-  console.error('Failed to parse decrypted envs', plaintext)
+if (process.env.ENCRYPTED_ENV) {
+  const plaintext = await encryptionService.decryptText(
+    process.env.ENCRYPTED_ENV,
+    process.env.AAD_JSON ? JSON.parse(process.env.AAD_JSON) : {},
+  )
+  try {
+    const asObj = JSON.parse(plaintext)
+    decryptedEnvs = asObj
+  } catch {
+    console.error('Failed to parse decrypted envs', plaintext)
+  }
 }
 
 const setResponseHeaders = ({

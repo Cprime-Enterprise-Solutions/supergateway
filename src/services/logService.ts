@@ -5,7 +5,16 @@ import {
 } from '../lib/mcpServerLogRepository.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 
-export class LogService {
+export interface ILogService {
+  log(
+    data: string | object,
+    type: string,
+    logger: Logger,
+    session: { ip: string; userId: string; sessionId: string },
+  ): Promise<void>
+}
+
+export class LogService implements ILogService {
   constructor(private readonly repository: McpServerLogRepository) {}
 
   async log(

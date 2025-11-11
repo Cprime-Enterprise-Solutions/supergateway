@@ -12,6 +12,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { EncryptionService } from '../services/encryptionService.js'
 import { initMongoClient } from '../lib/initMongoClient.js'
 import { McpServerLogRepository } from '../lib/mcpServerLogRepository.js'
+import { ILogService, LogService } from '../services/logService.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -26,6 +27,13 @@ export interface StdioToSseArgs {
 }
 
 const encryptionService = new EncryptionService('env')
+const mongoClient = initMongoClient()
+const mcpServerLogRepository = new McpServerLogRepository(
+  mongoClient,
+  process.env.MONGO_DB ?? 'localhost',
+  process.env.LOGS_COLLECTION ?? 'mcp_server_logs',
+)
+const logService: ILogService = new LogService(mcpServerLogRepository)
 let decryptedEnvs = {}
 if (process.env.ENCRYPTED_ENV) {
   const plaintext = await encryptionService.decryptText(
@@ -83,13 +91,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
   )
 
   onSignals({ logger })
-
-  const mongoClient = initMongoClient()
-  const mcpServerLogRepository = new McpServerLogRepository(
-    mongoClient,
-    process.env.MONGO_DB ?? 'localhost',
-    process.env.LOGS_COLLECTION ?? 'mcp_server_logs',
-  )
 
   const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, {
     shell: true,
@@ -159,19 +160,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      mcpServerLogRepository
-        .insert({
-          ip: req.ip ?? '',
-          userId: (req.query.userId as string) ?? '',
-          sessionId,
-          type: 'request-rpc',
-          data: msg,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .catch((err) => {
-          logger.error(`Failed to insert log:`, JSON.stringify(err))
-        })
+      logService.log(msg, 'request-rpc', logger, {
+        ...sessions[sessionId],
+        sessionId,
+      })
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
 
@@ -232,19 +224,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
         for (const [sid, session] of Object.entries(sessions)) {
           try {
             session.transport.send(jsonMsg)
-            mcpServerLogRepository
-              .insert({
-                ip: session.ip,
-                userId: session.userId,
-                sessionId: sid,
-                type: 'response-rpc',
-                data: jsonMsg,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              })
-              .catch((err) => {
-                logger.error(`Failed to insert log:`, JSON.stringify(err))
-              })
+            logService.log(jsonMsg, 'response-rpc', logger, {
+              ...session,
+              sessionId: sid,
+            })
           } catch (err) {
             logger.error(`Failed to send to session ${sid}:`, err)
             delete sessions[sid]
@@ -253,19 +236,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
       } catch {
         logger.error(`Child non-JSON: ${line}`)
         for (const [sid, session] of Object.entries(sessions)) {
-          mcpServerLogRepository
-            .insert({
-              ip: session.ip,
-              userId: session.userId,
-              sessionId: sid,
-              type: 'system',
-              data: line.toString(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .catch((err) => {
-              logger.error(`Failed to insert log:`, JSON.stringify(err))
-            })
+          logService.log(line.toString(), 'system', logger, {
+            ...session,
+            sessionId: sid,
+          })
         }
       }
     })
@@ -274,19 +248,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
   child.stderr.on('data', (chunk: Buffer) => {
     logger.error(`Child stderr: ${chunk.toString('utf8')}`)
     for (const [sid, session] of Object.entries(sessions)) {
-      mcpServerLogRepository
-        .insert({
-          ip: session.ip,
-          userId: session.userId,
-          sessionId: sid,
-          type: 'system',
-          data: chunk.toString('utf8'),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .catch((err) => {
-          logger.error(`Failed to insert log:`, JSON.stringify(err))
-        })
+      logService.log(chunk.toString('utf8'), 'system', logger, {
+        ...session,
+        sessionId: sid,
+      })
     }
   })
 }

@@ -39,7 +39,7 @@ export class McpServerLogRepository {
 
 export type McpServerLogDto = {
   ip: string
-  type: 'rpc' | 'error' | 'system'
+  type: 'request-rpc' | 'response-rpc' | 'system'
   userId: string
   sessionId: string
   data: JSONRPCMessage | string

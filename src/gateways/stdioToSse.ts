@@ -164,7 +164,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
           ip: req.ip ?? '',
           userId: (req.query.userId as string) ?? '',
           sessionId,
-          type: 'rpc',
+          type: 'request-rpc',
           data: msg,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -237,8 +237,8 @@ export async function stdioToSse(args: StdioToSseArgs) {
                 ip: session.ip,
                 userId: session.userId,
                 sessionId: sid,
-                type: 'system',
-                data: line,
+                type: 'response-rpc',
+                data: jsonMsg,
                 createdAt: new Date(),
                 updatedAt: new Date(),
               })
@@ -252,11 +252,41 @@ export async function stdioToSse(args: StdioToSseArgs) {
         }
       } catch {
         logger.error(`Child non-JSON: ${line}`)
+        for (const [sid, session] of Object.entries(sessions)) {
+          mcpServerLogRepository
+            .insert({
+              ip: session.ip,
+              userId: session.userId,
+              sessionId: sid,
+              type: 'system',
+              data: line.toString(),
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .catch((err) => {
+              logger.error(`Failed to insert log:`, JSON.stringify(err))
+            })
+        }
       }
     })
   })
 
   child.stderr.on('data', (chunk: Buffer) => {
     logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+    for (const [sid, session] of Object.entries(sessions)) {
+      mcpServerLogRepository
+        .insert({
+          ip: session.ip,
+          userId: session.userId,
+          sessionId: sid,
+          type: 'system',
+          data: chunk.toString('utf8'),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .catch((err) => {
+          logger.error(`Failed to insert log:`, JSON.stringify(err))
+        })
+    }
   })
 }

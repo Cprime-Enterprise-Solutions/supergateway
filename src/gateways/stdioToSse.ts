@@ -101,11 +101,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
     process.exit(code ?? 1)
   })
 
-  const server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-
   const sessions: Record<
     string,
     {
@@ -145,6 +140,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
       headers,
     })
 
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     await server.connect(sseTransport)
 

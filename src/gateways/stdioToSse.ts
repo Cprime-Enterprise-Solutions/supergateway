@@ -114,6 +114,30 @@ export async function stdioToSse(args: StdioToSseArgs) {
     env: { ...process.env, ...decryptedEnvs },
   })
 
+  /** Coalesce rapid stderr bursts into one DB log after this idle gap (ms). */
+  const STDERR_LOG_DEBOUNCE_MS = 400
+  let stderrLogBuffer = ''
+  let stderrLogFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+  const flushStderrToLogs = () => {
+    stderrLogFlushTimer = null
+    if (!stderrLogBuffer) return
+    const text = stderrLogBuffer
+    stderrLogBuffer = ''
+    logger.error(`Child stderr: ${text}`)
+    for (const [sid, session] of Object.entries(sessions)) {
+      logService.log(text, 'system', logger, {
+        ...session,
+        sessionId: sid,
+      })
+    }
+  }
+
+  const scheduleStderrLogFlush = () => {
+    if (stderrLogFlushTimer) clearTimeout(stderrLogFlushTimer)
+    stderrLogFlushTimer = setTimeout(flushStderrToLogs, STDERR_LOG_DEBOUNCE_MS)
+  }
+
   const broadcastChildError = (errorParams: Record<string, unknown>) => {
     const notification: JSONRPCMessage = {
       jsonrpc: '2.0',
@@ -152,6 +176,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
   })
 
   child.on('exit', (code, signal) => {
+    if (stderrLogFlushTimer) {
+      clearTimeout(stderrLogFlushTimer)
+      stderrLogFlushTimer = null
+    }
+    flushStderrToLogs()
+
     logger.error(`Child exited: code=${code}, signal=${signal}`)
     if (isShuttingDown || code === 0) return
     const errorData = {
@@ -305,12 +335,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   })
 
   child.stderr.on('data', (chunk: Buffer) => {
-    logger.error(`Child stderr: ${chunk.toString('utf8')}`)
-    for (const [sid, session] of Object.entries(sessions)) {
-      logService.log(chunk.toString('utf8'), 'system', logger, {
-        ...session,
-        sessionId: sid,
-      })
-    }
+    stderrLogBuffer += chunk.toString('utf8')
+    scheduleStderrLogFlush()
   })
 }

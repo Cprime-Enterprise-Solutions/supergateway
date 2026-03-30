@@ -90,15 +90,13 @@ export async function stdioToSse(args: StdioToSseArgs) {
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
 
-  onSignals({ logger })
-
-  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, {
-    shell: true,
-    env: { ...process.env, ...decryptedEnvs },
-  })
-  child.on('exit', (code, signal) => {
-    logger.error(`Child exited: code=${code}, signal=${signal}`)
-    process.exit(code ?? 1)
+  let isShuttingDown = false
+  onSignals({
+    logger,
+    cleanup: () => {
+      isShuttingDown = true
+      child.kill()
+    },
   })
 
   const sessions: Record<
@@ -110,6 +108,62 @@ export async function stdioToSse(args: StdioToSseArgs) {
       userId: string
     }
   > = {}
+
+  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, {
+    shell: true,
+    env: { ...process.env, ...decryptedEnvs },
+  })
+
+  const broadcastChildError = (errorParams: Record<string, unknown>) => {
+    const notification: JSONRPCMessage = {
+      jsonrpc: '2.0',
+      method: 'error',
+      params: errorParams,
+    }
+    for (const [sid, session] of Object.entries(sessions)) {
+      try {
+        session.transport.send(notification)
+      } catch (err) {
+        logger.error(`Failed to send child error to session ${sid}:`, err)
+      }
+    }
+  }
+
+  const logChildError = async (errorData: Record<string, unknown>) => {
+    for (const [sid, session] of Object.entries(sessions)) {
+      await logService.log(errorData, 'system', logger, {
+        ip: session.ip,
+        userId: session.userId,
+        sessionId: sid,
+      })
+    }
+  }
+
+  child.on('error', (err) => {
+    logger.error(`Child process error: ${err.message}`)
+    const errorData = {
+      type: 'spawn-error',
+      message: err.message,
+      code: (err as NodeJS.ErrnoException).code ?? null,
+      timestamp: new Date().toISOString(),
+    }
+    broadcastChildError(errorData)
+    logChildError(errorData)
+  })
+
+  child.on('exit', (code, signal) => {
+    logger.error(`Child exited: code=${code}, signal=${signal}`)
+    if (isShuttingDown || code === 0) return
+    const errorData = {
+      type: 'exit',
+      exitCode: code,
+      signal: signal ?? null,
+      message: `Child process exited unexpectedly (code=${code}, signal=${signal})`,
+      timestamp: new Date().toISOString(),
+    }
+    broadcastChildError(errorData)
+    logChildError(errorData)
+  })
 
   const app = express()
 
@@ -163,6 +217,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
         ...sessions[sessionId],
         sessionId,
       })
+      if (child.killed || child.exitCode !== null) {
+        logger.error(
+          `Cannot forward message to child — process is not running (session ${sessionId})`,
+        )
+        return
+      }
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
 
